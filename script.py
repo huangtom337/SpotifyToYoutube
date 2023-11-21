@@ -14,30 +14,25 @@ redirect_uri = 'http://localhost:8888/callback'
 access_token = None
 playlists_I_want = set(['Demon', '3am', 'DY', 'Does it get better than this', 'K', '青春', 'Piano x2', 'Artcore x2', '日本語'])
 
-def get_access_token(client_id, client_secret):
+#OAuth 2.0
+def get_access_token(code, client_id, client_secret):
 
-    url = 'https://accounts.spotify.com/api/token'
-    data = {
-        'grant_type': 'client_credentials',
+    token_url = 'https://accounts.spotify.com/api/token'
+    payload = {
+        'grant_type': 'authorization_code',
+        'code': code,
+        'redirect_uri': redirect_uri,
         'client_id': client_id,
         'client_secret': client_secret
     }
-    headers = {
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
 
-    response = requests.post(url, headers=headers, data=data)
-
-    access_token = None
+    response = requests.post(token_url, data=payload)
     if response.ok:
-        access_token = response.json().get('access_token', None)
-        
+        return response.json()  # Contains access token and refresh token
     else:
-        access_token = str(response.status_code) + response.text
-    
-    return access_token
+        return response.text
 
-def get_playlists():
+def get_playlists(access_token):
     url = "https://api.spotify.com/v1/users/12179241495/playlists"
     headers = {
         'Authorization': f"Bearer {access_token}"
@@ -53,7 +48,7 @@ def get_playlists():
     
     return data
 
-def get_playlist_songs(playlist_id):
+def get_playlist_songs(access_token, playlist_id):
     url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
     headers = {
         'Authorization': f"Bearer {access_token}"
@@ -91,8 +86,12 @@ def callback():
     # Handle the callback from Spotify
     # Extract the authorization code from the request
     code = request.args.get('code')
+   
     # Exchange code for access token
-    access_token = get_access_token(client_id, client_secret)
+    tokens = get_access_token(code, client_id, client_secret)
+    access_token = tokens['access_token']
+    refresh_token = tokens['refresh_token']
+   
     # Fetch playlists
     playlists = get_playlists(access_token)['items']
     playlist_name_id = [(playlist['name'], playlist['id']) for playlist in playlists if playlist['name'] in playlists_I_want]
