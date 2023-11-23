@@ -17,14 +17,14 @@ spotify_client_id = os.getenv('SPOTIFY_CLIENT_ID')
 spotify_client_secret = os.getenv('SPOTIFY_CLIENT_SECRET')
 redirect_uri_spotify = 'http://localhost:8888/callback_spotify'
 redirect_uri_youtube = 'http://localhost:8888/callback_youtube'
-playlists_I_want = set(['Demon', '3am', 'DY', 'Does it get better than this', 'K', '青春', 'Piano x2', 'Artcore x2', '日本語'])
+playlists_I_want = set(['3am', 'Does it get better than this', 'K'])
 SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
 CLIENT_SECRETS_FILE = os.getenv('YOUTUBE_SECRET_FILE')
 API_SERVICE_NAME = 'youtube'
 API_VERSION = 'v3'
 good_playlist = defaultdict(list)
 youtube_playlist = defaultdict(list) # {playlist_name: [videoID...]}
-
+youtube_playlist_id = defaultdict(list) # {playlist_id: [videoID...]}
 app.secret_key = 'akwdjnakwjdn'
 
 #OAuth 2.0 Spotify
@@ -88,22 +88,6 @@ def get_playlist_songs(access_token, playlist_id):
     
     return tracks_items
 
-def create_playlist(youtube, title, description, privacy_status):
-    request = youtube.playlists().insert(
-        part="snippet,status",
-        body={
-          "snippet": {
-            "title": title,
-            "description": description
-          },
-          "status": {
-            "privacyStatus": privacy_status
-          }
-        }
-    )
-    response = request.execute()
-    print(f"Playlist created: {response['snippet']['title']} (ID: {response['id']})")
-    return response
 
 @app.route('/')
 def index():
@@ -132,12 +116,10 @@ def callback_spotify():
     # Fetch playlists
     playlists = get_playlists(spotify_access_token)
     playlist_name_id = [(playlist['name'], playlist['id']) for playlist in playlists if playlist['name'] in playlists_I_want]
-    # Fetch songs from playlists
-    
+
     for playlist_name, playlist_id in playlist_name_id: 
         songs = get_playlist_songs(spotify_access_token, playlist_id)
         if songs:
-            print(playlist_name)
             for song in songs:
                 song_artists = song['track'].get('artists', None)
                 song_name = song['track'].get('name', None)
@@ -145,7 +127,7 @@ def callback_spotify():
                     all_artists_string = ', '.join([artist.get('name', '') for artist in song_artists])
                     good_playlist[playlist_name].append((all_artists_string, song_name))
  
-    return flask.redirect('find_video_youtube')
+    return flask.redirect('authorize_youtube')
 
 
 @app.route('/find_video_youtube')
@@ -158,102 +140,133 @@ def find_video_youtube():
         
             video_id = find_video_ID(query_string)
             youtube_playlist[playlist_name].append(video_id)
-    
-    return flask.redict('create_playlist_youtube')
+          
+    return flask.redirect('create_playlist_youtube')
 
 @app.route('/create_playlist_youtube')
 def create_playlist_youtube():
-    
 
-
-#Youtube Quota Too Expensive
-# @app.route('/find_video_youtube')
-# def find_video_youtube(): 
-#     if 'credentials' not in flask.session:
-#         return flask.redirect('authorize_youtube')
+    credentials = credentials_from_dict(flask.session['credentials'])
+    youtube = googleapiclient.discovery.build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
     
-#     credentials = google.oauth2.credentials.Credentials(**flask.session['credentials'])
-    
-#     youtube = googleapiclient.discovery.build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
-    
-#     youtube_playlist = defaultdict(list) # {playlist_name: [videoID...]}
-
-#     for playlist_name, songs in session['good_playlist'].items():
-#         for song in songs:
-#             artist_names, song_name = song[0], song[1]
-#             query_string = song_name + " " + artist_names
+    for playlist_name in youtube_playlist:
+        request = youtube.playlists().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": f"{playlist_name}",
+                    "description": "",
+                    "tags": [
+                    "playlist",
+                    "API call"
+                    ],
+                    "defaultLanguage": "en"
+                },
+                "status": {
+                    "privacyStatus": "public"
+                }
+            }       
+        )
         
-#             request = youtube.search().list(
-#                 part="snippet",
-#                 maxResults=1,
-#                 order="relevance",
-#                 q=f"{query_string}",
-#                 type="video",
-#                 videoCategoryId="10",
-#             )
-#             response = request.execute()
-#             search_result = response['items'][0]
-#             video_id = search_result['id']['videoId']
-#             youtube_playlist[playlist_name].append(video_id)
+        
+        response = request.execute()
 
-#     flask.session['credentials'] = credentials_to_dict(credentials)
+        playlist_id = response['id']
+        youtube_playlist_id[playlist_id] = youtube_playlist[f"{playlist_name}"]
 
-#     return flask.jsonify(**youtube_playlist)
+  
+    return flask.redirect('insert_playlist')
 
-# @app.route('/authorize_youtube')
-# def authorize_youtube():
-#     # Create flow instance to manage the OAuth 2.0 Authorization Grant Flow steps.
-#     flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(CLIENT_SECRETS_FILE, scopes=SCOPES)   
-#     # flow.redirect_uri = flask.url_for('callback_youtube', _external=True)
+@app.route('/insert_playlist')
+def insert_playlist():
 
-#     authorization_url, state = flow.authorization_url(
-#         # Enable offline access so that you can refresh an access token without
-#         # re-prompting the user for permission. Recommended for web server apps.
-#         access_type='offline',
-#         # Enable incremental authorization. Recommended as a best practice.
-#         include_granted_scopes='true')
+    credentials = credentials_from_dict(flask.session['credentials'])
+    youtube = googleapiclient.discovery.build(
+        API_SERVICE_NAME, API_VERSION, credentials=credentials)
+   
+    for playlist_id, video_ids in youtube_playlist_id.items():
+        for video_id in video_ids:
+           
+            request = youtube.playlistItems().insert(
+                part="snippet",
+                body={
+                "snippet": {
+                    "playlistId": f"{playlist_id}",
+                    "resourceId": {
+                    "kind": "youtube#video",
+                    "videoId": f"{video_id}"
+                    }
+                }
+                }
+            )
+            response = request.execute()    
 
-#     # Store the state so the callback can verify the auth server response.
-#     flask.session['state'] = state
+    return "hi"
+
+@app.route('/authorize_youtube')
+def authorize_youtube():
+    # Create flow instance to manage the OAuth 2.0 Authorization Grant Flow steps.
+    flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(CLIENT_SECRETS_FILE, scopes=SCOPES)   
+    flow.redirect_uri = flask.url_for('callback_youtube', _external=True)
+
+    authorization_url, state = flow.authorization_url(
+        # Enable offline access so that you can refresh an access token without
+        # re-prompting the user for permission. Recommended for web server apps.
+        access_type='offline',
+        # Enable incremental authorization. Recommended as a best practice.
+        include_granted_scopes='true')
+
+    # Store the state so the callback can verify the auth server response.
+    flask.session['state'] = state
     
-#     return flask.redirect(authorization_url)
+    return flask.redirect(authorization_url)
     
-# @app.route('/callback_youtube')
-# def callback_youtube():
-#     # Specify the state when creating the flow in the callback so that it can
-#     # verified in the authorization server response.
-#     state = flask.session['state']
+@app.route('/callback_youtube')
+def callback_youtube():
+    # Specify the state when creating the flow in the callback so that it can
+    # verified in the authorization server response.
+    state = flask.session['state']
 
-#     flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(CLIENT_SECRETS_FILE, scopes=SCOPES, state=state)
-#     flow.redirect_uri = flask.url_for('callback_youtube', _external=True)
+    flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(CLIENT_SECRETS_FILE, scopes=SCOPES, state=state)
+    flow.redirect_uri = flask.url_for('callback_youtube', _external=True)
 
-#     # Use the authorization server's response to fetch the OAuth 2.0 tokens.
-#     authorization_response = flask.request.url
-#     flow.fetch_token(authorization_response=authorization_response)
+    # Use the authorization server's response to fetch the OAuth 2.0 tokens.
+    authorization_response = flask.request.url
+    flow.fetch_token(authorization_response=authorization_response)
 
-#     # Store credentials in the session.
-#     # ACTION ITEM: In a production app, you likely want to save these
-#     #              credentials in a persistent database instead.
-#     credentials = flow.credentials
-#     flask.session['credentials'] = credentials_to_dict(credentials)
+    # Store credentials in the session.
+    # ACTION ITEM: In a production app, you likely want to save these
+    #              credentials in a persistent database instead.
+    credentials = flow.credentials
 
-#     return flask.redirect(flask.url_for('find_video_youtube'))    
+    flask.session['credentials'] = credentials_to_dict(credentials)
 
-# @app.route('/clear')
-# def clear_credentials():
-#   if 'credentials' in flask.session:
-#     del flask.session['credentials']
-#   return ('Credentials have been cleared.<br><br>')    
+    return flask.redirect(flask.url_for('find_video_youtube'))    
+
+@app.route('/clear')
+def clear_credentials():
+  if 'credentials' in flask.session:
+    del flask.session['credentials']
+  return ('Credentials have been cleared.<br><br>')    
 
 
-# def credentials_to_dict(credentials):
-#   return {'token': credentials.token,
-#           'refresh_token': credentials.refresh_token,
-#           'token_uri': credentials.token_uri,
-#           'client_id': credentials.client_id,
-#           'client_secret': credentials.client_secret,
-#           'scopes': credentials.scopes}
+def credentials_to_dict(credentials):
+  return {'token': credentials.token,
+          'refresh_token': credentials.refresh_token,
+          'token_uri': credentials.token_uri,
+          'client_id': credentials.client_id,
+          'client_secret': credentials.client_secret,
+          'scopes': credentials.scopes}
 
+
+def credentials_from_dict(credentials_dict):
+    return google.oauth2.credentials.Credentials(
+        token=credentials_dict['token'],
+        refresh_token=credentials_dict['refresh_token'],
+        token_uri=credentials_dict['token_uri'],
+        client_id=credentials_dict['client_id'],
+        client_secret=credentials_dict['client_secret'],
+        scopes=credentials_dict['scopes'])
 
 if __name__ == '__main__':
     
