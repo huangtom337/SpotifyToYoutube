@@ -9,15 +9,16 @@ import google.oauth2.credentials
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
 from reverse_api import find_video_ID
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 load_dotenv()
 
 spotify_client_id = os.getenv('SPOTIFY_CLIENT_ID')
 spotify_client_secret = os.getenv('SPOTIFY_CLIENT_SECRET')
 redirect_uri_spotify = 'http://localhost:8888/callback_spotify'
 redirect_uri_youtube = 'http://localhost:8888/callback_youtube'
-playlists_I_want = set(['K'])
 SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
 CLIENT_SECRETS_FILE = os.getenv('YOUTUBE_SECRET_FILE')
 API_SERVICE_NAME = 'youtube'
@@ -26,6 +27,8 @@ good_playlist = defaultdict(list)
 youtube_playlist = defaultdict(list) # {playlist_name: [videoID...]}
 youtube_playlist_id = defaultdict(list) # {playlist_id: [videoID...]}
 app.secret_key = os.getenv('APP_SECRET_KEY')
+
+
 
 #OAuth 2.0 Spotify
 def get_access_token_spotify(code, spotify_client_id, spotify_client_secret):
@@ -59,7 +62,7 @@ def get_user_id(access_token):
         return str(response.status_code) + response.text
 
 def get_playlists(access_token, user_id):
-    # user_id = '12179241495'  # get user_id from user
+
     url = f"https://api.spotify.com/v1/users/{user_id}/playlists?limit=50"
     headers = {
         'Authorization': f"Bearer {access_token}"
@@ -77,7 +80,6 @@ def get_playlists(access_token, user_id):
     return get_own_playlists(data['items'], user_id)
 
 def get_own_playlists(all_playlists, user_id):
-
     return [playlist for playlist in all_playlists if playlist['owner']['id'] == user_id] 
 
 def find_video_youtube():
@@ -133,31 +135,43 @@ def callback_spotify():
    
     # Exchange code for access token
     tokens = get_access_token_spotify(code, spotify_client_id, spotify_client_secret)
-    spotify_access_token = tokens['access_token']
-    spotify_refresh_token = tokens['refresh_token']
-    
-    user_id = get_user_id(spotify_access_token)
-    
+    credentials = spotify_credentials_to_dict(tokens)
+    flask.session['spotify_credentials'] = credentials
+  
+    return redirect(f"http://localhost:5173?loggedIn=true")
     # Fetch playlists
-    playlists = get_playlists(spotify_access_token, user_id)
-    playlist_name_id = [(playlist['name'], playlist['id']) for playlist in playlists if playlist['name'] in playlists_I_want]
-
-    for playlist_name, playlist_id in playlist_name_id: 
-        songs = get_playlist_songs(spotify_access_token, playlist_id)
-        if songs:
-            for song in songs:
-                song_artists = song['track'].get('artists', None)
-                song_name = song['track'].get('name', None)
-                if song_artists and song_name:
-                    all_artists_string = ', '.join([artist.get('name', '') for artist in song_artists])
-                    good_playlist[playlist_name].append((all_artists_string, song_name))
+    # playlists = get_playlists(spotify_access_token, user_id)
+    # return flask.jsonify(playlists)
+    # playlist_name_id = [(playlist['name'], playlist['id']) for playlist in playlists if playlist['name'] == '3am']
+    # playlist_user = ""
+    # playlist_name_id = None
+    # # Get User input
+    # while not playlist_name_id:
+    #     for playlist in playlists:
+    #         print(playlist['name'])
+    #     playlist_user = input("Enter playlist name to be converted: ")
+                
+    #     playlist_name_id = [(playlist['name'], playlist['id']) for playlist in playlists if playlist['name'] == playlist_user]
+    #     if not playlist_name_id:
+    #         print('Please enter a valid playlist name')
+    
+    # for playlist_name, playlist_id in playlist_name_id: 
+    #     songs = get_playlist_songs(spotify_access_token, playlist_id)
+    #     if songs:
+    #         for song in songs:
+    #             song_artists = song['track'].get('artists', None)
+    #             song_name = song['track'].get('name', None)
+    #             if song_artists and song_name:
+    #                 all_artists_string = ', '.join([artist.get('name', '') for artist in song_artists])
+    #                 good_playlist[playlist_name].append((all_artists_string, song_name))
  
-    return flask.redirect('authorize_youtube')
+    # return flask.jsonify(good_playlist)
+    # return flask.redirect('authorize_youtube')
 
 @app.route('/create_playlist_youtube')
 def create_playlist_youtube():
 
-    credentials = credentials_from_dict(flask.session['credentials'])
+    credentials = youtube_credentials_from_dict(flask.session['youtube_credentials'])
     youtube = googleapiclient.discovery.build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
     
     for playlist_name in youtube_playlist:
@@ -191,7 +205,7 @@ def create_playlist_youtube():
 @app.route('/insert_playlist')
 def insert_playlist():
 
-    credentials = credentials_from_dict(flask.session['credentials'])
+    credentials = youtube_credentials_from_dict(flask.session['youtube_credentials'])
     youtube = googleapiclient.discovery.build(
         API_SERVICE_NAME, API_VERSION, credentials=credentials)
    
@@ -250,19 +264,18 @@ def callback_youtube():
     #              credentials in a persistent database instead.
     credentials = flow.credentials
 
-    flask.session['credentials'] = credentials_to_dict(credentials)
+    flask.session['youtube_credentials'] = credentials_to_dict(credentials)
     find_video_youtube()
     
     return flask.redirect(flask.url_for('create_playlist_youtube'))    
 
 @app.route('/clear')
 def clear_credentials():
-  if 'credentials' in flask.session:
-    del flask.session['credentials']
+  if 'youtube_credentials' in flask.session:
+    del flask.session['youtube_credentials']
   return ('Credentials have been cleared.<br><br>')    
 
-
-def credentials_to_dict(credentials):
+def youtube_credentials_to_dict(credentials):
   return {'token': credentials.token,
           'refresh_token': credentials.refresh_token,
           'token_uri': credentials.token_uri,
@@ -270,8 +283,7 @@ def credentials_to_dict(credentials):
           'client_secret': credentials.client_secret,
           'scopes': credentials.scopes}
 
-
-def credentials_from_dict(credentials_dict):
+def youtube_credentials_from_dict(credentials_dict):
     return google.oauth2.credentials.Credentials(
         token=credentials_dict['token'],
         refresh_token=credentials_dict['refresh_token'],
@@ -280,11 +292,22 @@ def credentials_from_dict(credentials_dict):
         client_secret=credentials_dict['client_secret'],
         scopes=credentials_dict['scopes'])
 
-if __name__ == '__main__':
-    
+def spotify_credentials_to_dict(credentials):
+    return {'access_token': credentials['access_token'], 
+            'refresh_token': credentials['refresh_token'], 
+            'user_id': get_user_id(credentials['access_token'])}
+
+
+def main():
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
     app.run(port=8888)
+    
+    
+if __name__ == '__main__':
+    main()
+    
+
 
 
 
