@@ -1,0 +1,21 @@
+.playlist-ul {
+  list-style-type: none;
+  padding: 0;
+}
+
+.playlist-li {
+  cursor: pointer;
+  padding: 8px; /* Padding for better readability */
+}
+
+.playlist-text {
+  transition: background-color 0.3s, color 0.3s, border-radius 0.3s; /* Smooth transition for hover effect */
+  display: inline-block; /* Allows border-radius to take effect */
+  padding: 2px 8px; /* Padding for the text */
+  border-radius: 10px; /* Rounded corners */
+}
+
+.playlist-text:hover {
+  background-color: #f0f0f0; /* Hover effect on background */
+  color: black; /* Text color change on hover */
+}
