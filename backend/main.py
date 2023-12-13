@@ -27,8 +27,8 @@ good_playlist = defaultdict(list)
 youtube_playlist = defaultdict(list) # {playlist_name: [videoID...]}
 youtube_playlist_id = defaultdict(list) # {playlist_id: [videoID...]}
 app.secret_key = os.getenv('APP_SECRET_KEY')
-
-
+find_video_progress = {'current':0, 'total': 0}
+convert_video_progress =  {'current':0, 'total': 0}
 
 #OAuth 2.0 Spotify
 def get_access_token_spotify(code, spotify_client_id, spotify_client_secret):
@@ -81,19 +81,6 @@ def get_playlists(access_token, user_id):
 
 def get_own_playlists(all_playlists, user_id):
     return [playlist for playlist in all_playlists if playlist['owner']['id'] == user_id] 
-
-def find_video_youtube():
-    
-    for playlist_name, songs in good_playlist.items():
-        
-        for song in songs:
-            print(song)
-            artist_names, song_name = song[0], song[1]
-            query_string = song_name + " " + artist_names
-        
-            video_id = find_video_ID(query_string)
-            youtube_playlist[playlist_name].append(video_id)
-            print(video_id)
 
 def get_playlist_songs(access_token, playlist_id):
     
@@ -184,9 +171,35 @@ def convert_playlist():
                     
     return flask.jsonify({'success': True, 'message': 'Playlist processed successfully'}), 200
 
+@app.route('/find_video_progress')
+def get_video_progress():
+
+    if find_video_progress['total'] == 0:
+        return flask.jsonify({'progress': 0})
+    return flask.jsonify({'progress': round((find_video_progress['current'] / find_video_progress['total']) * 100, 0)})
+
+@app.route('/find_video_youtube')
+def find_video_youtube():
+    global find_video_progress
+    for playlist_name, songs in good_playlist.items():
+        total_videos = len(songs)
+        find_video_progress['total'] = total_videos
+        find_video_progress['current'] = 0
+        for song in songs:
+            print(song)
+            artist_names, song_name = song[0], song[1]
+            query_string = song_name + " " + artist_names
+        
+            video_id = find_video_ID(query_string)
+            youtube_playlist[playlist_name].append(video_id)
+            print(video_id)
+            find_video_progress['current'] += 1
+    
+    return flask.redirect(flask.url_for('create_playlist_youtube')) 
+
 @app.route('/create_playlist_youtube')
 def create_playlist_youtube():
-
+    
     credentials = youtube_credentials_from_dict(flask.session['youtube_credentials'])
     youtube = googleapiclient.discovery.build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
     
@@ -218,16 +231,25 @@ def create_playlist_youtube():
   
     return flask.redirect(flask.url_for('insert_playlist'))   
 
+@app.route('/insert_playlist_progress')
+def get_insert_progress():
+    if convert_video_progress['total'] == 0:
+        return flask.jsonify({'progress': 0})
+    return flask.jsonify({'progress': round((convert_video_progress['current'] / convert_video_progress['total']) * 100, 0)})
+
 @app.route('/insert_playlist')
 def insert_playlist():
-
+    global convert_video_progress
+    
     credentials = youtube_credentials_from_dict(flask.session['youtube_credentials'])
     youtube = googleapiclient.discovery.build(
         API_SERVICE_NAME, API_VERSION, credentials=credentials)
    
     for playlist_id, video_ids in youtube_playlist_id.items():
+        convert_video_progress['total'] = len(video_ids)
+        convert_video_progress['current'] = 0
         for video_id in video_ids:
-           
+     
             request = youtube.playlistItems().insert(
                 part="snippet",
                 body={
@@ -241,6 +263,8 @@ def insert_playlist():
                 }
             )
             response = request.execute()   
+            
+            convert_video_progress['current'] += 1
 
     return flask.jsonify({'message': 'Conversion Complete', 'success': True})
 
@@ -281,7 +305,7 @@ def callback_youtube():
     credentials = flow.credentials
 
     flask.session['youtube_credentials'] = youtube_credentials_to_dict(credentials)
-    find_video_youtube()
+    
     
     return redirect(f"http://localhost:5173?loggedInYoutube=true") 
 
